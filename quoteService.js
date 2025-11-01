@@ -1,13 +1,13 @@
 const puppeteer = require('puppeteer');
 
-// Caching Logic
+// Caching Logic 
 const cache = { data: null, timestamp: 0 };
 const CACHE_DURATION = 60 * 1000; // 60 seconds
 const BROWSER_ARGS = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
 
-// Selectors for cronista.com
-const CRONISTA_BUY_SELECTOR = '.buy .val'; 
+//  Selectors for cronista.com 
+const CRONISTA_BUY_SELECTOR = '.buy .val';  
 const CRONISTA_SELL_SELECTOR = '.sell .val'; 
 
 /**
@@ -20,7 +20,7 @@ function parsePrice(priceString) {
   return parseFloat(cleanedString);
 }
 
-// 1. Scraper Functions ---
+// 1. Scraper Functions 
 
 async function fetchDolarHoy() {
   const url = 'https://www.dolarhoy.com/';
@@ -29,7 +29,8 @@ async function fetchDolarHoy() {
     browser = await puppeteer.launch({ args: BROWSER_ARGS });
     const page = await browser.newPage();
     await page.setUserAgent(USER_AGENT);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // Increase navigation timeout for slow servers
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 }); 
     await page.waitForSelector('.val', { timeout: 10000 });
 
     const prices = await page.evaluate(() => {
@@ -69,7 +70,8 @@ async function fetchCronista() {
     browser = await puppeteer.launch({ args: BROWSER_ARGS });
     const page = await browser.newPage();
     await page.setUserAgent(USER_AGENT);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // Increase navigation timeout for slow servers
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
 
     await page.waitForSelector(CRONISTA_BUY_SELECTOR, { timeout: 10000 });
     await page.waitForSelector(CRONISTA_SELL_SELECTOR, { timeout: 10000 });
@@ -100,7 +102,7 @@ async function fetchCronista() {
   }
 }
 
-//  2. Main Service Functions ---
+// 2. Main Service Functions 
 
 async function getQuotes() {
   const now = Date.now();
@@ -108,14 +110,38 @@ async function getQuotes() {
     console.log('Returning data from cache');
     return cache.data;
   }
-  console.log('Fetching fresh data');
-  const results = await Promise.all([
-    fetchDolarHoy(),
-    fetchCronista(),
-  ]);
-  const successfulQuotes = results.filter(quote => quote !== null);
+  
+  console.log('Fetching fresh data (sequentially)...');
+  const successfulQuotes = [];
+
+  // Run scrapers one by one, not at the same time.
+  try {
+    console.log('Fetching DolarHoy...');
+    const dolarHoy = await fetchDolarHoy();
+    if (dolarHoy) {
+      successfulQuotes.push(dolarHoy);
+      console.log('Successfully fetched DolarHoy');
+    }
+  } catch (e) {
+    console.error('DolarHoy fetch failed:', e.message);
+  }
+
+  try {
+    console.log('Fetching Cronista...');
+    const cronista = await fetchCronista();
+    if (cronista) {
+      successfulQuotes.push(cronista);
+      console.log('Successfully fetched Cronista');
+    }
+  } catch (e) {
+    console.error('Cronista fetch failed:', e.message);
+  }
+
+  // Update cache
   cache.data = successfulQuotes;
   cache.timestamp = now;
+  
+  console.log(`Fetch complete. Found ${successfulQuotes.length} sources.`);
   return successfulQuotes;
 }
 
@@ -157,7 +183,7 @@ async function getSlippage() {
       };
     }
     const buy_price_slippage = (quote.buy_price - average.average_buy_price) / average.average_buy_price;
-    const sell_price_slippage = (quote.sell_price - average.average_buy_price) / average.average_buy_price;
+    const sell_price_slippage = (quote.sell_price - average.average_sell_price) / average.average_buy_price;
     return {
       buy_price_slippage: buy_price_slippage,
       sell_price_slippage: sell_price_slippage,
@@ -171,3 +197,4 @@ module.exports = {
   getAverage,
   getSlippage,
 };
+
